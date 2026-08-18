@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { Send, Square, Menu, Sun, Moon, MessageSquare, Trash2, Loader2, Eye, EyeOff, ChevronDown, ChevronUp } from "lucide-react";
+import { Send, Square, Menu, Sun, Moon, MessageSquare, Trash2, Loader2, Eye, EyeOff } from "lucide-react";
 
 interface Message {
   id: string;
@@ -10,8 +10,8 @@ interface Message {
   content: string;
   timestamp: number;
   raw?: string;
-  masked?: string;        
-  showRaw?: boolean;     
+  masked?: string;
+  showRaw?: boolean;
 }
 
 interface Conversation {
@@ -22,7 +22,6 @@ interface Conversation {
 }
 
 const API_BASE = "http://localhost:8080";
-const DEMO_MODE = true;
 
 function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -31,7 +30,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [backendOk, setBackendOk] = useState<boolean | null>(DEMO_MODE ? true : null);
+  const [backendOk, setBackendOk] = useState<boolean | null>(null);
   const [models, setModels] = useState<string[]>(["openai/gpt-oss-120b"]);
   const [selectedModel, setSelectedModel] = useState<string>("openai/gpt-oss-120b");
   const [theme, setTheme] = useState<"light" | "dark">(
@@ -40,18 +39,18 @@ function App() {
   );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [processingDots, setProcessingDots] = useState("");
-  const [showProcessing, setShowProcessing] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const dotIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingMessageRef = useRef<string>("");
 
   const activeConv = conversations.find((c) => c.id === activeId) || null;
   const messages = activeConv?.messages || [];
+
   useEffect(() => {
     if (isStreaming || isLoading) {
-      setShowProcessing(true);
       const dots = ["●", "●●", "●●●", "●●●●"];
       let i = 0;
       dotIntervalRef.current = setInterval(() => {
@@ -59,11 +58,11 @@ function App() {
         i++;
       }, 300);
     } else {
-      setShowProcessing(false);
       if (dotIntervalRef.current) {
         clearInterval(dotIntervalRef.current);
         dotIntervalRef.current = null;
       }
+      setProcessingDots("");
     }
     return () => {
       if (dotIntervalRef.current) {
@@ -85,9 +84,7 @@ function App() {
         setConversations(JSON.parse(stored));
       } catch {}
     }
-    if (!DEMO_MODE) {
-      checkBackend();
-    }
+    checkBackend();
   }, []);
 
   useEffect(() => {
@@ -156,7 +153,20 @@ function App() {
   };
 
   const sendMessage = async () => {
-    if (!input.trim() || isLoading) return;
+    // Get the current input value directly from the ref
+    const messageToSend = pendingMessageRef.current.trim();
+    
+    if (!messageToSend || isLoading) {
+      console.log("❌ Cannot send: empty or loading");
+      return;
+    }
+
+    console.log("📤 Sending message:", messageToSend);
+    console.log("📏 Message length:", messageToSend.length);
+
+    // Clear the input immediately
+    setInput("");
+    pendingMessageRef.current = "";
 
     let convId = activeId;
     if (!convId) {
@@ -169,7 +179,7 @@ function App() {
     const userMsg: Message = {
       id: crypto.randomUUID(),
       role: "user",
-      content: input,
+      content: messageToSend,
       timestamp: Date.now(),
     };
 
@@ -180,8 +190,6 @@ function App() {
           : c
       )
     );
-    const userInput = input;
-    setInput("");
     setIsLoading(true);
     setError(null);
 
@@ -204,17 +212,21 @@ function App() {
     abortControllerRef.current = new AbortController();
 
     try {
-      let fullContent = "";
+      let streamedContent = "";
       let rawContent = "";
       let maskedContent = "";
+      let hasReceivedContent = false;
+      let restoredContent = "";
       setIsStreaming(true);
       setIsLoading(false);
+
+      const allMessages = [...conv.messages, userMsg];
 
       const response = await fetch(`${API_BASE}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: [...conv.messages, userMsg].map((m) => ({ role: m.role, content: m.content })),
+          messages: allMessages.map((m) => ({ role: m.role, content: m.content })),
           stream: true,
           temperature: 1.0,
           max_tokens: 2048,
@@ -251,75 +263,98 @@ function App() {
             if (data === "[DONE]") continue;
             try {
               const chunk = JSON.parse(data);
-              // Check for raw content from backend
-              const delta = chunk.choices?.[0]?.delta?.content;
-              const rawDelta = chunk.choices?.[0]?.delta?.raw_content;
-              const maskedDelta = chunk.choices?.[0]?.delta?.masked_content;
+              const delta = chunk.choices?.[0]?.delta;
 
               if (delta) {
-                fullContent += delta;
-                setConversations((prev) =>
-                  prev.map((c) => {
-                    if (c.id !== convId) return c;
-                    const msgs = [...c.messages];
-                    const last = msgs[msgs.length - 1];
-                    if (last && last.id === assistantMsg.id) {
-                      msgs[msgs.length - 1] = { ...last, content: fullContent };
-                    }
-                    return { ...c, messages: msgs };
-                  })
-                );
+                if (delta.raw_content && delta.masked_content) {
+                  restoredContent = delta.raw_content;
+                  rawContent = delta.raw_content;
+                  maskedContent = delta.masked_content;
+                  
+                  setConversations((prev) =>
+                    prev.map((c) => {
+                      if (c.id !== convId) return c;
+                      const msgs = [...c.messages];
+                      const last = msgs[msgs.length - 1];
+                      if (last && last.id === assistantMsg.id) {
+                        msgs[msgs.length - 1] = {
+                          ...last,
+                          content: restoredContent,
+                          raw: rawContent,
+                          masked: maskedContent,
+                        };
+                      }
+                      return { ...c, messages: msgs };
+                    })
+                  );
+                  continue;
+                }
+
+                const chunkContent = delta.content || "";
+                if (chunkContent) {
+                  streamedContent += chunkContent;
+                  hasReceivedContent = true;
+                  
+                  setConversations((prev) =>
+                    prev.map((c) => {
+                      if (c.id !== convId) return c;
+                      const msgs = [...c.messages];
+                      const last = msgs[msgs.length - 1];
+                      if (last && last.id === assistantMsg.id) {
+                        msgs[msgs.length - 1] = {
+                          ...last,
+                          content: streamedContent,
+                          raw: rawContent || streamedContent,
+                          masked: maskedContent || streamedContent,
+                        };
+                      }
+                      return { ...c, messages: msgs };
+                    })
+                  );
+                }
               }
-              if (rawDelta) {
-                rawContent += rawDelta;
-                setConversations((prev) =>
-                  prev.map((c) => {
-                    if (c.id !== convId) return c;
-                    const msgs = [...c.messages];
-                    const last = msgs[msgs.length - 1];
-                    if (last && last.id === assistantMsg.id) {
-                      msgs[msgs.length - 1] = { ...last, raw: rawContent };
-                    }
-                    return { ...c, messages: msgs };
-                  })
-                );
-              }
-              if (maskedDelta) {
-                maskedContent += maskedDelta;
-                setConversations((prev) =>
-                  prev.map((c) => {
-                    if (c.id !== convId) return c;
-                    const msgs = [...c.messages];
-                    const last = msgs[msgs.length - 1];
-                    if (last && last.id === assistantMsg.id) {
-                      msgs[msgs.length - 1] = { ...last, masked: maskedContent };
-                    }
-                    return { ...c, messages: msgs };
-                  })
-                );
-              }
-            } catch {
-              // ignore parse errors
+            } catch (e) {
+              console.error("Parse error:", e);
             }
           }
         }
       }
 
       setIsStreaming(false);
-      if (!fullContent) {
+
+      const finalContent = restoredContent || streamedContent;
+      if (finalContent) {
         setConversations((prev) =>
           prev.map((c) => {
             if (c.id !== convId) return c;
             const msgs = [...c.messages];
             const last = msgs[msgs.length - 1];
             if (last && last.id === assistantMsg.id) {
-              msgs[msgs.length - 1] = { ...last, content: "(No response)" };
+              msgs[msgs.length - 1] = {
+                ...last,
+                content: finalContent,
+                raw: rawContent || finalContent,
+                masked: maskedContent || finalContent,
+              };
+            }
+            return { ...c, messages: msgs };
+          })
+        );
+      } else if (!hasReceivedContent) {
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id !== convId) return c;
+            const msgs = [...c.messages];
+            const last = msgs[msgs.length - 1];
+            if (last && last.id === assistantMsg.id) {
+              msgs[msgs.length - 1] = { ...last, content: "No response received" };
             }
             return { ...c, messages: msgs };
           })
         );
       }
     } catch (err) {
+      console.error("Send message error:", err);
       if (err instanceof Error && err.name === "AbortError") {
         setConversations((prev) =>
           prev.map((c) => {
@@ -327,7 +362,7 @@ function App() {
             const msgs = [...c.messages];
             const last = msgs[msgs.length - 1];
             if (last && last.id === assistantMsg.id) {
-              msgs[msgs.length - 1] = { ...last, content: "⏹️ Generation stopped" };
+              msgs[msgs.length - 1] = { ...last, content: "Generation stopped" };
             }
             return { ...c, messages: msgs };
           })
@@ -342,7 +377,7 @@ function App() {
             if (last && last.id === assistantMsg.id) {
               msgs[msgs.length - 1] = {
                 ...last,
-                content: `❌ ${err instanceof Error ? err.message : "Unknown error"}`,
+                content: `Error: ${err instanceof Error ? err.message : "Unknown error"}`,
               };
             }
             return { ...c, messages: msgs };
@@ -356,13 +391,15 @@ function App() {
     }
   };
 
-  const stopGeneration = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
-    setIsLoading(false);
-    setIsStreaming(false);
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    setInput(value);
+    pendingMessageRef.current = value;
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    sendMessage();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -370,6 +407,15 @@ function App() {
       e.preventDefault();
       sendMessage();
     }
+  };
+
+  const stopGeneration = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsLoading(false);
+    setIsStreaming(false);
   };
 
   if (backendOk === false) {
@@ -464,7 +510,7 @@ function App() {
               {activeConv?.name || "HBP100 Chat"}
             </h1>
             <span className="text-xs bg-green-500/20 text-green-600 dark:text-green-400 px-2 py-0.5 rounded-full">
-              🔐 Privacy Protected
+              Privacy Protected
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -485,11 +531,7 @@ function App() {
               onClick={() => setTheme(theme === "light" ? "dark" : "light")}
               className="p-2 rounded hover:bg-muted transition-colors"
             >
-              {theme === "light" ? (
-                <Moon className="w-4 h-4" />
-              ) : (
-                <Sun className="w-4 h-4" />
-              )}
+              {theme === "light" ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
             </button>
           </div>
         </header>
@@ -512,25 +554,17 @@ function App() {
           <div className="mx-auto max-w-3xl">
             {messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-64 text-center">
-                <h2 className="text-2xl font-bold text-muted-foreground">
-                  Hello there
-                </h2>
-                <p className="mt-2 text-muted-foreground">
-                  Type a message to get started
-                </p>
+                <h2 className="text-2xl font-bold text-muted-foreground">Hello there</h2>
+                <p className="mt-2 text-muted-foreground">Type a message to get started</p>
                 <p className="mt-1 text-sm text-muted-foreground/60">
-                  🔐 Your PII is automatically masked before reaching the LLM
+                  Your PII is automatically masked before reaching the LLM
                 </p>
               </div>
             ) : (
               messages.map((msg) => (
                 <div
                   key={msg.id}
-                  className={`my-4 ${
-                    msg.role === "user"
-                      ? "flex justify-end"
-                      : "flex justify-start"
-                  }`}
+                  className={`my-4 ${msg.role === "user" ? "flex justify-end" : "flex justify-start"}`}
                 >
                   <div
                     className={`max-w-[85%] ${
@@ -564,12 +598,12 @@ function App() {
                           }}
                         >
                           {msg.showRaw && msg.raw ? msg.raw : msg.content}
-                          {msg.id === messages[messages.length - 1]?.id &&
-                            isStreaming &&
-                            "|"}
                         </ReactMarkdown>
 
-                        {/* Raw/Masked toggle button */}
+                        {msg.id === messages[messages.length - 1]?.id && isStreaming && (
+                          <span className="inline-block w-1 h-4 animate-pulse bg-primary">▌</span>
+                        )}
+
                         {(msg.raw || msg.masked) && (
                           <div className="mt-2 flex items-center gap-2">
                             <button
@@ -589,22 +623,16 @@ function App() {
                               )}
                             </button>
                             {msg.showRaw && msg.raw && (
-                              <span className="text-xs text-yellow-500/70">
-                                ⚠️ Raw response may contain PII
-                              </span>
+                              <span className="text-xs text-yellow-500/70">Raw response may contain PII</span>
                             )}
                             {!msg.showRaw && msg.masked && (
-                              <span className="text-xs text-green-500/70">
-                                🔐 PII masked
-                              </span>
+                              <span className="text-xs text-green-500/70">PII masked</span>
                             )}
                           </div>
                         )}
                       </>
                     ) : (
-                      <div className="whitespace-pre-wrap break-words text-sm">
-                        {msg.content}
-                      </div>
+                      <div className="whitespace-pre-wrap break-words text-sm">{msg.content}</div>
                     )}
                     <div className="mt-1 text-xs opacity-70">
                       {new Date(msg.timestamp).toLocaleTimeString()}
@@ -614,7 +642,6 @@ function App() {
               ))
             )}
 
-            {/* Processing indicator with spinning dots */}
             {(isLoading || isStreaming) && (
               <div className="flex items-center gap-3 text-muted-foreground py-2">
                 <div className="flex items-center gap-1">
@@ -623,9 +650,7 @@ function App() {
                     {processingDots}
                   </span>
                 </div>
-                <span className="text-xs text-muted-foreground/60">
-                  🔐 Masking PII
-                </span>
+                <span className="text-xs text-muted-foreground/60">Masking PII</span>
               </div>
             )}
             <div ref={messagesEndRef} />
@@ -635,25 +660,22 @@ function App() {
         <div className="border-t border-border bg-background/80 px-4 py-4 backdrop-blur">
           <div className="mx-auto max-w-3xl">
             <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                sendMessage();
-              }}
+              onSubmit={handleSubmit}
               className="flex flex-col gap-2 rounded-2xl border border-border bg-background/80 p-2 shadow-sm"
             >
               <textarea
                 ref={inputRef}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
-                placeholder="Type a message... (PII will be automatically masked)"
+                placeholder="Type a message..."
                 className="min-h-[56px] max-h-[200px] w-full resize-none border-0 bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted-foreground"
                 rows={1}
                 disabled={isLoading || isStreaming}
               />
               <div className="flex justify-between items-center px-2">
                 <span className="text-xs text-muted-foreground/60">
-                  🔐 Your sensitive data is masked before reaching the LLM
+                  Your sensitive data is masked before reaching the LLM
                 </span>
                 <div className="flex gap-2">
                   {isLoading || isStreaming ? (

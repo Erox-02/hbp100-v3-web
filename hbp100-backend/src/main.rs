@@ -7,19 +7,21 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use dotenv::dotenv;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::env;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
+
 #[derive(Clone, Serialize, Deserialize)]
 struct ChatMessage {
     role: String,
     content: String,
 }
+
 #[derive(Deserialize)]
 struct ChatRequest {
     messages: Vec<ChatMessage>,
@@ -27,9 +29,8 @@ struct ChatRequest {
     model: Option<String>,
     temperature: Option<f32>,
     max_tokens: Option<u32>,
-    top_p: Option<f32>,
-    reasoning_effort: Option<String>,
 }
+
 #[derive(Serialize)]
 struct ModelData {
     id: String,
@@ -37,17 +38,20 @@ struct ModelData {
     created: u64,
     owned_by: String,
 }
+
 #[derive(Serialize)]
 struct ModelsResponse {
     object: String,
     data: Vec<ModelData>,
 }
+
 #[derive(Clone)]
 struct AppState {
     hbp100: Arc<Mutex<hbp100::HBP100>>,
     llm_url: String,
     groq_api_key: String,
 }
+
 async fn list_models() -> Json<ModelsResponse> {
     Json(ModelsResponse {
         object: "list".to_string(),
@@ -59,6 +63,7 @@ async fn list_models() -> Json<ModelsResponse> {
         }],
     })
 }
+
 async fn chat_completion(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ChatRequest>,
@@ -66,36 +71,47 @@ async fn chat_completion(
     let llm_url = state.llm_url.clone();
     let api_key = state.groq_api_key.clone();
 
-    let user_message = req
-        .messages
-        .iter()
-        .find(|m| m.role == "user")
-        .map(|m| m.content.as_str())
-        .unwrap_or("");
-    let (masked_text, metadata) = {
-        let mut engine = state.hbp100.lock().await;
-        let result = engine.process(user_message, Some("general_chat"));
-        (result.masked_text.clone(), result.metadata.clone())
-    };
+    println!("");
+    println!("================================================================================ ");
+    println!("📨 Received {} messages:", req.messages.len());
+    for (i, msg) in req.messages.iter().enumerate() {
+        println!("  [{}] {}: {}", i, msg.role, msg.content);
+    }
+    println!("================================================================================ ");
+    println!("");
+
+    // MASK ALL USER MESSAGES
     let mut masked_messages = req.messages.clone();
-    if let Some(last) = masked_messages.last_mut() {
-        if last.role == "user" {
-            last.content = masked_text;
+    let mut last_metadata: Option<HashMap<String, String>> = None;
+
+    for msg in masked_messages.iter_mut() {
+        if msg.role == "user" {
+            let (masked_text, metadata) = {
+                let mut engine = state.hbp100.lock().await;
+                let result = engine.process(&msg.content, Some("general_chat"));
+                println!("🔐 Original: {}", msg.content);
+                println!("🔐 Masked:   {}", result.masked_text);
+                (result.masked_text.clone(), result.metadata.clone())
+            };
+            msg.content = masked_text;
+            last_metadata = Some(metadata);
         }
     }
+
+    println!("📤 Sending to Groq (all user messages masked):");
+    for (i, msg) in masked_messages.iter().enumerate() {
+        println!("  [{}] {}: {}", i, msg.role, msg.content);
+    }
+
     let temperature = req.temperature.unwrap_or(1.0);
     let max_tokens = req.max_tokens.unwrap_or(2048);
-    let top_p = req.top_p.unwrap_or(1.0);
-    let reasoning_effort = req
-        .reasoning_effort
-        .clone()
-        .unwrap_or_else(|| "medium".to_string());
     let model = req
         .model
         .unwrap_or_else(|| "openai/gpt-oss-120b".to_string());
+
     let stream = async_stream::stream! {
         let client = reqwest::Client::new();
-        println!("sending to Groq with model: {}", model);
+
         let llm_response = client
             .post(&llm_url)
             .header("Authorization", format!("Bearer {}", api_key))
@@ -105,19 +121,22 @@ async fn chat_completion(
                 "stream": true,
                 "temperature": temperature,
                 "max_completion_tokens": max_tokens,
-                "top_p": top_p,
+                "top_p": 1.0,
                 "model": model,
-                "reasoning_effort": reasoning_effort,
+                "reasoning_effort": "medium",
                 "stop": null,
             }))
             .send()
             .await;
+
         match llm_response {
             Ok(res) => {
-                println!("response status: {}", res.status());
-                if !res.status().is_success() {
+                let status = res.status();
+                println!("📥 Groq response status: {}", status);
+
+                if !status.is_success() {
                     let error_text = res.text().await.unwrap_or_default();
-                    println!("❌ Error response: {}", error_text);
+                    println!("❌ Groq error: {}", error_text);
                     yield Ok(
                         Event::default().data(
                             serde_json::json!({
@@ -128,9 +147,11 @@ async fn chat_completion(
                     );
                     return;
                 }
+
                 let mut response_stream = res.bytes_stream();
                 let mut buffer = String::new();
                 let mut full_response = String::new();
+
                 while let Some(chunk_result) =
                     futures::StreamExt::next(&mut response_stream).await
                 {
@@ -138,32 +159,41 @@ async fn chat_completion(
                         Ok(bytes) => {
                             let text = String::from_utf8_lossy(&bytes);
                             buffer.push_str(&text);
+
                             let lines: Vec<String> = buffer
                                 .split('\n')
                                 .map(|s| s.to_string())
                                 .collect();
+
                             buffer = lines
                                 .last()
                                 .cloned()
                                 .unwrap_or_default();
+
                             for line in &lines[..lines.len().saturating_sub(1)] {
                                 let line = line.trim_end_matches('\r');
+
                                 if !line.starts_with("data: ") {
                                     continue;
                                 }
+
                                 let data = &line[6..];
+
                                 if data == "[DONE]" {
                                     continue;
                                 }
+
                                 let chunk =
                                     match serde_json::from_str::<serde_json::Value>(data) {
                                         Ok(value) => value,
                                         Err(_) => continue,
                                     };
+
                                 if let Some(delta) =
                                     chunk["choices"][0]["delta"]["content"].as_str()
                                 {
                                     full_response.push_str(delta);
+
                                     yield Ok(
                                         Event::default().data(
                                             serde_json::json!({
@@ -179,6 +209,7 @@ async fn chat_completion(
                                 }
                             }
                         }
+
                         Err(e) => {
                             yield Ok(
                                 Event::default().data(
@@ -192,11 +223,20 @@ async fn chat_completion(
                         }
                     }
                 }
-                if !full_response.is_empty() {
-                    let restored_result = {
-                        let mut engine = state.hbp100.lock().await;
-                        engine.restore_with_metadata(&full_response, metadata.clone())
-                    };
+
+                println!("📝 Full response from Groq: {}", full_response);
+
+                // Restore PII using the last user's metadata
+                let restored_result = if !full_response.is_empty() && last_metadata.is_some() {
+                    let mut engine = state.hbp100.lock().await;
+                    let restored = engine.restore_with_metadata(&full_response, last_metadata.clone().unwrap());
+                    println!("🔓 Restored: {}", restored);
+                    restored
+                } else {
+                    full_response.clone()
+                };
+
+                if !restored_result.is_empty() {
                     yield Ok(
                         Event::default().data(
                             serde_json::json!({
@@ -212,8 +252,10 @@ async fn chat_completion(
                         )
                     );
                 }
+
                 yield Ok(Event::default().data("[DONE]"));
             }
+
             Err(e) => {
                 println!("❌ Request failed: {}", e);
                 yield Ok(
@@ -227,8 +269,10 @@ async fn chat_completion(
             }
         }
     };
+
     Sse::new(stream)
 }
+
 async fn health_check() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "ok",
@@ -236,9 +280,10 @@ async fn health_check() -> Json<serde_json::Value> {
         "version": "0.1.0"
     }))
 }
+
 #[tokio::main]
 async fn main() {
-    dotenv().ok();
+    dotenv::dotenv().ok();
     tracing_subscriber::fmt::init();
 
     let groq_api_key = env::var("GROQ_API_KEY")
@@ -260,9 +305,14 @@ async fn main() {
         .route("/health", get(health_check))
         .layer(CorsLayer::permissive())
         .with_state(Arc::clone(&app_state));
+
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")
         .await
         .unwrap();
+
     println!("🔐 HBP100 Groq Gateway running on http://localhost:8080");
+    println!("🤖 Using model: openai/gpt-oss-120b");
+    println!("📍 Press Ctrl+C to stop");
+
     axum::serve(listener, app).await.unwrap();
 }
