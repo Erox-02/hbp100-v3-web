@@ -45,10 +45,10 @@ class ModelsResponse(BaseModel):
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 engine = HBP100()
-sessions = {}
 
 @app.get("/health")
-async def health_check():
+async def hea    data: List[ModelData]
+lth_check():
     return {"status": "ok", "service": "hbp100-groq-gateway", "version": "1.0.0"}
 
 @app.get("/v1/models")
@@ -70,15 +70,28 @@ async def chat_completion(request: ChatRequest):
     if not GROQ_API_KEY:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
     session = HBP100Session("chat_completion")
-    session_id = session.session_id()
+    session_id = f"conv_{os.urandom(8).hex()}"
     sessions[session_id] = session
     masked_messages = []
+    last_metadata = {}
     for msg in request.messages:
         if msg.role == "user":
-            result = session.process(engine, msg.content)
-            masked_messages.append({"role": msg.role, "content": result["masked_text"]})
+            result = engine.process(
+                msg.content,
+                session_id=session_id,  
+                intent="general_chat"
+            )
+                        if hasattr(result, 'metadata') and result.metadata:
+                last_metadata.update(result.metadata)
+            
+            masked_text = result.masked_text if hasattr(result, 'masked_text') else msg.content
+            print(f"orignal: {msg.content}")
+            print(f"masked:   {masked_text}")
+            
+            masked_messages.append({"role": msg.role, "content": masked_text})
         else:
             masked_messages.append({"role": msg.role, "content": msg.content})
+
     async def stream_generator():
         async with httpx.AsyncClient(timeout=120.0) as client:
             try:
@@ -96,16 +109,17 @@ async def chat_completion(request: ChatRequest):
                         "top_p": request.top_p,
                         "model": request.model or "openai/gpt-oss-120b",
                         "reasoning_effort": request.reasoning_effort,
-                        "stop": None,
-                }*!
+                         if full_response:
+               "stop": None,
+                    }
                 )
-
                 if response.status_code != 200:
                     error_text = await response.aread()
                     yield f"data: {json.dumps({'error': f'Groq API error: {error_text.decode()}'})}\n\n"
                     return
                 full_response = ""
                 buffer = ""
+
                 async for chunk in response.aiter_bytes():
                     text = chunk.decode()
                     buffer += text
@@ -127,11 +141,10 @@ async def chat_completion(request: ChatRequest):
                 restored_response = full_response
                 if full_response:
                     try:
-                        restored_response = session.restore(engine, full_response)
+                        restored_response = engine.restore(full_response, session_id=session_id)
                     except Exception as e:
-                        print(f"Restoration error: {e}")
+                        print(f"restoration error: {e}")
                         restored_response = full_response
-                sessions.pop(session_id, None)
                 yield f"data: {json.dumps({'choices': [{'delta': {'content': restored_response, 'raw_content': restored_response, 'masked_content': full_response}}]})}\n\n"
                 yield "data: [DONE]\n\n"
             except httpx.TimeoutException:
