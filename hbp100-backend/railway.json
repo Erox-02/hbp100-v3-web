@@ -1,9 +1,0 @@
-{
-  "build": {
-    "builder": "rust"
-  },
-  "deploy": {
-    "startCommand": "./target/release/hbp100-backend",
-    "healthcheckPath": "/health"
-  }
-}

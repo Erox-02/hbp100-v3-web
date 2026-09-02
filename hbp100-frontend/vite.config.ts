@@ -7,17 +7,4 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
   },
-  build: {
-    outDir: "dist",
-    sourcemap: false,
-    minify: true,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          react: ['react', 'react-dom'],
-          markdown: ['react-markdown', 'react-syntax-highlighter'],
-        }
-      }
-    }
-  }
 });

@@ -21,7 +21,7 @@ interface Conversation {
   lastModified: number;
 }
 
-const API_BASE = "http://localhost:8080";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080";
 
 function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -39,16 +39,13 @@ function App() {
   );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [processingDots, setProcessingDots] = useState("");
-
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const dotIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const pendingMessageRef = useRef<string>("");
-
   const activeConv = conversations.find((c) => c.id === activeId) || null;
   const messages = activeConv?.messages || [];
-
   useEffect(() => {
     if (isStreaming || isLoading) {
       const dots = ["●", "●●", "●●●", "●●●●"];
@@ -71,12 +68,10 @@ function App() {
       }
     };
   }, [isStreaming, isLoading]);
-
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
     localStorage.setItem("theme", theme);
   }, [theme]);
-
   useEffect(() => {
     const stored = localStorage.getItem("conversations");
     if (stored) {
@@ -86,7 +81,6 @@ function App() {
     }
     checkBackend();
   }, []);
-
   useEffect(() => {
     if (conversations.length > 0) {
       localStorage.setItem("conversations", JSON.stringify(conversations));
@@ -98,7 +92,6 @@ function App() {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages]);
-
   const checkBackend = async () => {
     try {
       const res = await fetch(`${API_BASE}/health`);
@@ -132,7 +125,6 @@ function App() {
     setActiveId(conv.id);
     return conv.id;
   };
-
   const deleteConversation = (id: string) => {
     setConversations((prev) => prev.filter((c) => c.id !== id));
     if (activeId === id) {
@@ -140,7 +132,6 @@ function App() {
       setActiveId(remaining.length > 0 ? remaining[0].id : null);
     }
   };
-
   const toggleRawView = (msgId: string) => {
     setConversations((prev) =>
       prev.map((c) => ({
@@ -151,38 +142,26 @@ function App() {
       }))
     );
   };
-
   const sendMessage = async () => {
-    // Get the current input value directly from the ref
     const messageToSend = pendingMessageRef.current.trim();
     
     if (!messageToSend || isLoading) {
-      console.log("❌ Cannot send: empty or loading");
       return;
     }
-
-    console.log("📤 Sending message:", messageToSend);
-    console.log("📏 Message length:", messageToSend.length);
-
-    // Clear the input immediately
     setInput("");
     pendingMessageRef.current = "";
-
     let convId = activeId;
     if (!convId) {
       convId = createConversation();
     }
-
     const conv = conversations.find((c) => c.id === convId);
     if (!conv) return;
-
     const userMsg: Message = {
       id: crypto.randomUUID(),
       role: "user",
       content: messageToSend,
       timestamp: Date.now(),
     };
-
     setConversations((prev) =>
       prev.map((c) =>
         c.id === convId
@@ -192,7 +171,6 @@ function App() {
     );
     setIsLoading(true);
     setError(null);
-
     const assistantMsg: Message = {
       id: crypto.randomUUID(),
       role: "assistant",
@@ -202,15 +180,12 @@ function App() {
       masked: "",
       showRaw: false,
     };
-
     setConversations((prev) =>
       prev.map((c) =>
         c.id === convId ? { ...c, messages: [...c.messages, assistantMsg] } : c
       )
     );
-
     abortControllerRef.current = new AbortController();
-
     try {
       let streamedContent = "";
       let rawContent = "";
@@ -219,9 +194,7 @@ function App() {
       let restoredContent = "";
       setIsStreaming(true);
       setIsLoading(false);
-
       const allMessages = [...conv.messages, userMsg];
-
       const response = await fetch(`${API_BASE}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -237,26 +210,20 @@ function App() {
         }),
         signal: abortControllerRef.current.signal,
       });
-
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
-
       const reader = response.body?.getReader();
       if (!reader) throw new Error("No response body");
-
       const decoder = new TextDecoder();
       let buffer = "";
-
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
-
         for (const line of lines) {
           if (line.startsWith("data: ")) {
             const data = line.slice(6);
@@ -264,13 +231,11 @@ function App() {
             try {
               const chunk = JSON.parse(data);
               const delta = chunk.choices?.[0]?.delta;
-
               if (delta) {
                 if (delta.raw_content && delta.masked_content) {
                   restoredContent = delta.raw_content;
                   rawContent = delta.raw_content;
                   maskedContent = delta.masked_content;
-                  
                   setConversations((prev) =>
                     prev.map((c) => {
                       if (c.id !== convId) return c;
@@ -289,12 +254,10 @@ function App() {
                   );
                   continue;
                 }
-
                 const chunkContent = delta.content || "";
                 if (chunkContent) {
                   streamedContent += chunkContent;
-                  hasReceivedContent = true;
-                  
+                  hasReceivedContent = true; 
                   setConversations((prev) =>
                     prev.map((c) => {
                       if (c.id !== convId) return c;
@@ -313,15 +276,13 @@ function App() {
                   );
                 }
               }
-            } catch (e) {
-              console.error("Parse error:", e);
+            } catch {
             }
           }
         }
       }
 
       setIsStreaming(false);
-
       const finalContent = restoredContent || streamedContent;
       if (finalContent) {
         setConversations((prev) =>
@@ -354,7 +315,6 @@ function App() {
         );
       }
     } catch (err) {
-      console.error("Send message error:", err);
       if (err instanceof Error && err.name === "AbortError") {
         setConversations((prev) =>
           prev.map((c) => {
@@ -396,19 +356,16 @@ function App() {
     setInput(value);
     pendingMessageRef.current = value;
   };
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     sendMessage();
   };
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
     }
   };
-
   const stopGeneration = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -417,7 +374,6 @@ function App() {
     setIsLoading(false);
     setIsStreaming(false);
   };
-
   if (backendOk === false) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
@@ -425,7 +381,7 @@ function App() {
           <div className="text-6xl mb-4">🔌</div>
           <h2 className="text-2xl font-bold mb-2">Backend Disconnected</h2>
           <p className="text-muted-foreground mb-4">
-            Please start your Rust backend on localhost:8080
+            Please start your backend on port 8080
           </p>
           <button
             onClick={checkBackend}
@@ -437,7 +393,6 @@ function App() {
       </div>
     );
   }
-
   if (backendOk === null) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
@@ -445,7 +400,6 @@ function App() {
       </div>
     );
   }
-
   return (
     <div className="flex h-screen bg-background">
       <div
@@ -496,7 +450,6 @@ function App() {
           </div>
         </div>
       </div>
-
       <div className="flex-1 flex flex-col min-w-0">
         <header className="flex items-center justify-between border-b border-border px-4 py-3">
           <div className="flex items-center gap-3">
@@ -535,7 +488,6 @@ function App() {
             </button>
           </div>
         </header>
-
         {error && (
           <div className="mx-auto mt-4 max-w-3xl w-full px-4">
             <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-center text-sm text-destructive">
@@ -549,7 +501,6 @@ function App() {
             </div>
           </div>
         )}
-
         <div className="flex-1 overflow-y-auto px-4 py-6">
           <div className="mx-auto max-w-3xl">
             {messages.length === 0 ? (
@@ -557,7 +508,7 @@ function App() {
                 <h2 className="text-2xl font-bold text-muted-foreground">Hello there</h2>
                 <p className="mt-2 text-muted-foreground">Type a message to get started</p>
                 <p className="mt-1 text-sm text-muted-foreground/60">
-                  Your PII is automatically masked before reaching the LLM
+                  Your Sensetive data is masked
                 </p>
               </div>
             ) : (
@@ -675,7 +626,7 @@ function App() {
               />
               <div className="flex justify-between items-center px-2">
                 <span className="text-xs text-muted-foreground/60">
-                  Your sensitive data is masked before reaching the LLM
+                  Your Sensetive data is protected and will be safe for future .
                 </span>
                 <div className="flex gap-2">
                   {isLoading || isStreaming ? (
