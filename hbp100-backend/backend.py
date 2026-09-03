@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Import hbp100
 from hbp100 import HBP100
 
 app = FastAPI(title="HBP100 Privacy Gateway")
