@@ -68,25 +68,21 @@ async def list_models():
 async def chat_completion(request: ChatRequest):
     if not GROQ_API_KEY:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
-    session = HBP100Session("chat_completion")
     session_id = f"conv_{os.urandom(8).hex()}"
-    sessions[session_id] = session
     masked_messages = []
     last_metadata = {}
     for msg in request.messages:
         if msg.role == "user":
-            result = engine.process(
-                msg.content,
-                session_id=session_id,  
-                intent="general_chat"
-            )
-            if hasattr(result, 'metadata') and result.metadata:
-                last_metadata.update(result.metadata)
-            
+            try:
+                result = engine.process(msg.content, session_id, "general_chat")
+            except TypeError:
+                try:
+                    result = engine.process(msg.content, session_id=session_id, intent="general_chat")
+                except TypeError:
+                    result = engine.process(msg.content, None, "general_chat")
             masked_text = result.masked_text if hasattr(result, 'masked_text') else msg.content
-            print(f"orignal: {msg.content}")
-            print(f"masked:   {masked_text}")
-            
+            print(f"original: {msg.content}")
+            print(f"msked: {masked_text}")
             masked_messages.append({"role": msg.role, "content": masked_text})
         else:
             masked_messages.append({"role": msg.role, "content": msg.content})
