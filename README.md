@@ -45,7 +45,7 @@ Now for the lazy guy who dont wanna go to the web , dont worry i have got it :p
 On the last phrase of debugging , i did a lot of heavy lifting , fixed my own bug of my diff project(yeah i am using tht here but the hrs werent counted :c) , faced cors , came to know production is a boss not a filter like localhost also serverless vercel is as worse as hell and the final cherry on top , u block origin blocking my own backend lol . (actually i wrote it and thought it wd be my devlog but damn future didnt lemme post a devlog without lapse so i cp and pasted it here lol)
 
 ## Tree
-
+```
 .
 ├── assets
 │   ├── black.png
@@ -71,6 +71,7 @@ On the last phrase of debugging , i did a lot of heavy lifting , fixed my own bu
 └── README.md
 
 5 directories, 18 files
+```
 
 > i just ran tree | wl-copy and pasted :p
 
