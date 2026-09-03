@@ -8,10 +8,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 from dotenv import load_dotenv
+
 load_dotenv()
+
+# Import hbp100
 from hbp100 import HBP100
 
 app = FastAPI(title="HBP100 Privacy Gateway")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -44,11 +48,12 @@ class ModelsResponse(BaseModel):
     data: List[ModelData]
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+
 engine = HBP100()
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "service": "hbp100-groq-gateway", "version": "1.0.0"}
+    return {"status": "ok", "service": "hbp100-groq-gateway", "version": "3.1.2"}
 
 @app.get("/v1/models")
 async def list_models():
@@ -68,25 +73,21 @@ async def list_models():
 async def chat_completion(request: ChatRequest):
     if not GROQ_API_KEY:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
-    session_id = f"conv_{os.urandom(8).hex()}"
     masked_messages = []
-    last_metadata = {}
+    all_metadata = {}
     for msg in request.messages:
         if msg.role == "user":
-            try:
-                result = engine.process(msg.content, session_id, "general_chat")
-            except TypeError:
-                try:
-                    result = engine.process(msg.content, session_id=session_id, intent="general_chat")
-                except TypeError:
-                    result = engine.process(msg.content, None, "general_chat")
-            masked_text = result.masked_text if hasattr(result, 'masked_text') else msg.content
-            print(f"original: {msg.content}")
-            print(f"msked: {masked_text}")
+            result = engine.process(msg.content)
+            masked_text = result.get('masked_text', msg.content)
+            metadata = result.get('metadata', {})
+            if metadata:
+                all_metadata.update(metadata)
+            print(f"orignal: {msg.content}")
+            print(f"masked:   {masked_text}")
+            print(f"metadata: {metadata}")
             masked_messages.append({"role": msg.role, "content": masked_text})
         else:
             masked_messages.append({"role": msg.role, "content": msg.content})
-
     async def stream_generator():
         async with httpx.AsyncClient(timeout=120.0) as client:
             try:
@@ -113,31 +114,31 @@ async def chat_completion(request: ChatRequest):
                     return
                 full_response = ""
                 buffer = ""
-                try:
-                    async for chunk in response.aiter_bytes():
-                        text = chunk.decode()
-                        buffer += text
-                        lines = buffer.split('\n')
-                        buffer = lines[-1] if lines else ""
-                        for line in lines[:-1]:
-                            if line.startswith("data: "):
-                                data = line[6:]
-                                if data == "[DONE]":
-                                    continue
-                                try:
-                                    chunk_data = json.loads(data)
-                                    delta = chunk_data.get("choices", [{}])[0].get("delta", {}).get("content")
-                                    if delta:
-                                        full_response += delta
-                                        yield f"data: {json.dumps({'choices': [{'delta': {'content': delta}}]})}\n\n"
-                                except:
-                                    pass
-                except Exception as e:
-                    yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+                async for chunk in response.aiter_bytes():
+                    text = chunk.decode()
+                    buffer += text
+                    lines = buffer.split('\n')
+                    buffer = lines[-1] if lines else ""
+                    for line in lines[:-1]:
+                        if line.startswith("data: "):
+                            data = line[6:]
+                            if data == "[DONE]":
+                                continue
+                            try:
+                                chunk_data = json.loads(data)
+                                delta = chunk_data.get("choices", [{}])[0].get("delta", {}).get("content")
+                                if delta:
+                                    full_response += delta
+                                    yield f"data: {json.dumps({'choices': [{'delta': {'content': delta}}]})}\n\n"
+                            except:
+                                pass
                 restored_response = full_response
-                if full_response:
+                if full_response and all_metadata:
                     try:
-                        restored_response = engine.restore(full_response, session_id=session_id)
+                        for placeholder, original in all_metadata.items():
+                            restored_response = restored_response.replace(placeholder, original)
+                        print(f"restored: {restored_response[:100]}...")
                     except Exception as e:
                         print(f"restoration error: {e}")
                         restored_response = full_response
