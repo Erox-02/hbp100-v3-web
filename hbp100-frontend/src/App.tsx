@@ -244,9 +244,9 @@ function App() {
                       if (last && last.id === assistantMsg.id) {
                         msgs[msgs.length - 1] = {
                           ...last,
-                          content: restoredContent,
-                          raw: rawContent,
-                          masked: maskedContent,
+                          content: maskedContent,
+                          raw: maskedContent,
+                          masked: restoredContent,
                         };
                       }
                       return { ...c, messages: msgs };
@@ -293,8 +293,8 @@ function App() {
             if (last && last.id === assistantMsg.id) {
               msgs[msgs.length - 1] = {
                 ...last,
-                content: finalContent,
-                raw: rawContent || finalContent,
+                content: maskedContent || finalContent,
+                raw: restoredContent || finalContent,
                 masked: maskedContent || finalContent,
               };
             }
@@ -508,7 +508,7 @@ function App() {
                 <h2 className="text-2xl font-bold text-muted-foreground">Hello there</h2>
                 <p className="mt-2 text-muted-foreground">Type a message to get started</p>
                 <p className="mt-1 text-sm text-muted-foreground/60">
-                  Your Sensetive data is masked
+                  Made for future ysws
                 </p>
               </div>
             ) : (
@@ -626,7 +626,7 @@ function App() {
               />
               <div className="flex justify-between items-center px-2">
                 <span className="text-xs text-muted-foreground/60">
-                  Your Sensetive data is protected and will be safe for future .
+                  Your Sensetive data is protected.
                 </span>
                 <div className="flex gap-2">
                   {isLoading || isStreaming ? (
