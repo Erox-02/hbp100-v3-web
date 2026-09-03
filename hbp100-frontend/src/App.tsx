@@ -564,21 +564,15 @@ function App() {
                               {msg.showRaw ? (
                                 <>
                                   <EyeOff className="w-3 h-3" />
-                                  Show Masked
+                                  Show Restored
                                 </>
                               ) : (
                                 <>
                                   <Eye className="w-3 h-3" />
-                                  Show Raw
+                                  Show masked
                                 </>
                               )}
                             </button>
-                            {msg.showRaw && msg.raw && (
-                              <span className="text-xs text-yellow-500/70">Raw response may contain PII</span>
-                            )}
-                            {!msg.showRaw && msg.masked && (
-                              <span className="text-xs text-green-500/70">PII masked</span>
-                            )}
                           </div>
                         )}
                       </>
