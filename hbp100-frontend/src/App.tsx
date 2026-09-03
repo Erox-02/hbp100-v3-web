@@ -21,7 +21,7 @@ interface Conversation {
   lastModified: number;
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080";
+const API_BASE = "https://hbp100-v3-web.onrender.com" || "http://localhost:8080";
 
 function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
