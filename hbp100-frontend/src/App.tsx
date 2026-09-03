@@ -48,7 +48,7 @@ function App() {
   const messages = activeConv?.messages || [];
   useEffect(() => {
     if (isStreaming || isLoading) {
-      const dots = ["●", "●●", "●●●", "●●●●"];
+      const dots = [".", "..", "...", "...."];
       let i = 0;
       dotIntervalRef.current = setInterval(() => {
         setProcessingDots(dots[i % dots.length]);
