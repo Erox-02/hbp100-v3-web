@@ -47,8 +47,7 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 engine = HBP100()
 
 @app.get("/health")
-async def hea    data: List[ModelData]
-lth_check():
+async def health_check():
     return {"status": "ok", "service": "hbp100-groq-gateway", "version": "1.0.0"}
 
 @app.get("/v1/models")
@@ -81,7 +80,7 @@ async def chat_completion(request: ChatRequest):
                 session_id=session_id,  
                 intent="general_chat"
             )
-                        if hasattr(result, 'metadata') and result.metadata:
+            if hasattr(result, 'metadata') and result.metadata:
                 last_metadata.update(result.metadata)
             
             masked_text = result.masked_text if hasattr(result, 'masked_text') else msg.content
@@ -109,8 +108,7 @@ async def chat_completion(request: ChatRequest):
                         "top_p": request.top_p,
                         "model": request.model or "openai/gpt-oss-120b",
                         "reasoning_effort": request.reasoning_effort,
-                         if full_response:
-               "stop": None,
+                        "stop": None,
                     }
                 )
                 if response.status_code != 200:
@@ -119,25 +117,27 @@ async def chat_completion(request: ChatRequest):
                     return
                 full_response = ""
                 buffer = ""
-
-                async for chunk in response.aiter_bytes():
-                    text = chunk.decode()
-                    buffer += text
-                    lines = buffer.split('\n')
-                    buffer = lines[-1] if lines else ""
-                    for line in lines[:-1]:
-                        if line.startswith("data: "):
-                            data = line[6:]
-                            if data == "[DONE]":
-                                continue
-                            try:
-                                chunk_data = json.loads(data)
-                                delta = chunk_data.get("choices", [{}])[0].get("delta", {}).get("content")
-                                if delta:
-                                    full_response += delta
-                                    yield f"data: {json.dumps({'choices': [{'delta': {'content': delta}}]})}\n\n"
-                            except:
-                                pass
+                try:
+                    async for chunk in response.aiter_bytes():
+                        text = chunk.decode()
+                        buffer += text
+                        lines = buffer.split('\n')
+                        buffer = lines[-1] if lines else ""
+                        for line in lines[:-1]:
+                            if line.startswith("data: "):
+                                data = line[6:]
+                                if data == "[DONE]":
+                                    continue
+                                try:
+                                    chunk_data = json.loads(data)
+                                    delta = chunk_data.get("choices", [{}])[0].get("delta", {}).get("content")
+                                    if delta:
+                                        full_response += delta
+                                        yield f"data: {json.dumps({'choices': [{'delta': {'content': delta}}]})}\n\n"
+                                except:
+                                    pass
+                except Exception as e:
+                    yield f"data: {json.dumps({'error': str(e)})}\n\n"
                 restored_response = full_response
                 if full_response:
                     try:
