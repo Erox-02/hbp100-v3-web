@@ -99,3 +99,7 @@ Also i use arch btw
 ## licence
 
 Do i even need one here?
+
+## Ai uses 
+
+To be honest , i used deepseek at the python initial footprint first then did the whole work myself and sorry reviewer i forgot to fill the ai uses section in future i am truly sorry but still it was limited to a lil portion you flagged the readme and everything.
