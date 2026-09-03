@@ -74,6 +74,13 @@ On the last phrase of debugging , i did a lot of heavy lifting , fixed my own bu
 
 > i just ran tree | wl-copy and pasted :p
 
+## URL
+
+```www
+https://hbp100-v3-web.vercel.app
+```
+---
+
 ## Credits (i thought it is showed at the last of movies!)
 
 -Hbp100 is a website based on assistant-ui , a open-source react based frontend for llms though i heavily modded it , my frontend still is a fork of assistant-ai.
